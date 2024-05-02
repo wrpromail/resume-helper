@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Run PyLint on all Python files
+files=$(git diff --cached --name-only --diff-filter=ACM | grep "\.py$")
+if [ -n "$files" ]; then
+    pylint $files
+    if [ $? -ne 0 ]; then
+        echo "PyLint detected issues. Please fix them before committing."
+        exit 1
+    fi
+fi
+
+exit 0

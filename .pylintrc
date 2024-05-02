@@ -1,0 +1,5 @@
+[MASTER]
+init-hook='import sys; sys.path.append(".")'
+
+[MESSAGES CONTROL]
+disable=C0114,C0116,C0115,R0903

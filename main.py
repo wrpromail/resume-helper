@@ -1,7 +1,8 @@
 from __future__ import annotations
 from typing import AsyncIterable
 # built-in modules
-import requests, time, random, string, os, json, re, uuid, datetime
+import requests, time, random, string, os, json, uuid, datetime
+from datetime import timezone
 
 # third-party tool modules
 from pdfminer.high_level import extract_text
@@ -33,14 +34,12 @@ def read_gcp_cred():
     gcp_cred = None
     fs_cred = None
     ACCOUNT_JSON_CONTENT = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, None)
-
     if not ACCOUNT_JSON_CONTENT:
         file_path = os.environ.get(LOCAL_SERVICE_ACCOUNT_JSON_PATH)
         print(f"Service Account JSON Path: {file_path}")
         gcp_cred = Credentials.from_service_account_file(file_path)
         fs_cred = credentials.Certificate(file_path)
         return gcp_cred, fs_cred
-    
     print(f"Service Account JSON: {ACCOUNT_JSON_CONTENT}")
     service_account_info = json.loads(ACCOUNT_JSON_CONTENT)
     print(f"Service Account Info: {service_account_info}")
@@ -57,7 +56,7 @@ staging_app = firebase_admin.initialize_app(credential=fs_cred, name='myfs')
 db = firestore.client(app=staging_app)
 
 def create_user_info(user_id, resume_register=None, voice_enabled=None, language=None):
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(tz=timezone.utc)
     print(f"Creating user info for user {user_id}")
     user_ref = db.collection('user_info').document(user_id)
     update_data = {}
@@ -77,6 +76,7 @@ def create_user_info(user_id, resume_register=None, voice_enabled=None, language
     return None 
 
 def update_user_info(user_id, resume_register=None, voice_enabled=None, language=None):
+    now = datetime.datetime.now(tz=timezone.utc)
     user_ref = db.collection('user_info').document(user_id)
     update_data = {}
     if resume_register:
@@ -86,6 +86,7 @@ def update_user_info(user_id, resume_register=None, voice_enabled=None, language
     if language:
         update_data['language'] = language
     if update_data:
+        update_data['updated_at'] = now
         rst = user_ref.update(update_data)
         return rst
     return None 
@@ -101,9 +102,8 @@ def create_basic_resume(user_id, resume_raw_content, resume_llm_processed_conten
         return None
     
     doc_id = str(uuid.uuid4())
-
     resume_ref = db.collection('basic_resume').document(doc_id)
-    timestamp_now = datetime.datetime.utcnow()
+    timestamp_now = datetime.datetime.now(tz=timezone.utc)
     update_data = {}
     if resume_raw_content:
         update_data['resume_raw_content'] = resume_raw_content
@@ -119,17 +119,16 @@ def create_basic_resume(user_id, resume_raw_content, resume_llm_processed_conten
         return rst
     return None
 
+# 暂时还不支持基本简历的更新
 def update_basic_resume(user_id, resume_id, resume_content, resume_tags):
     resume_ref = db.collection('basic_resume').document(resume_id)
-    update_data = {'user_id': user_id, 'updated_at': datetime.datetime.utcnow()}
+    update_data = {'user_id': user_id, 'updated_at': datetime.datetime.now(tz=timezone.utc)}
     if resume_content:
         update_data['resume_content'] = resume_content
     if resume_tags:
         update_data['resume_tags'] = resume_tags
-    if update_data:
-        rst = resume_ref.update(update_data)
-        return rst
-    return None
+    rst = resume_ref.update(update_data)
+    return rst
 
 def get_basic_resume(user_id, resume_id=None):
     col = db.collection('basic_resume')
@@ -340,40 +339,47 @@ def plain_text_intent(text: str):
     # 其他内容
     return 0
 
-# 去除文字中的敏感信息，后续需考虑使用特定模型、云服务来解决
-# 该方法存在问题
-def anonymize_text(text: str):
-    phone_pattern = re.compile(r'\b1[3-9]\d{9}\b')
-    text = phone_pattern.sub("13800000000", text)
-    email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
-    text = email_pattern.sub("example@example.com", text)
-    return text
+
+def compare_jd(user_id, jd_content, jd_source_type):
+    user_resume = get_basic_resume(user_id)
+    if not user_resume:
+        return False, "未找到用户简历信息 {}".format(user_id)
+    user_resume = user_resume.get('resume_raw_content')
+    compare_result = compare_resume_and_jd(user_resume, jd_content)
+
+    if not compare_result or compare_result == "":
+        return False, "简历与岗位描述对比失败"
+    jd_id, jd_create_rst = create_job_description(user_id, jd_content, jd_source_type, ["jd"])
+    compare_id, compare_entry_create_rst = create_compare_entry(user_id, jd_id, compare_result)
+    return True, "简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result)
+
+def check_user_status(user_id):
+    user_basic_info_exists = False
+    user_basic_resume_exists = False
+
+    
+    print(f"User ID: {user_id}")
+    user_info = get_user_info(user_id)
+    print(f"User Info: {user_info}")
+    if user_info:
+        user_basic_info_exists = True
+        user_basic_resume_exists = user_info.get('resume_register')
+        print(f"User {user_id} has registered user info")    
+    else:
+        print(f"User {user_id} has not registered user info")
+        rst = create_user_info(user_id, resume_register=False, voice_enabled=False, language='en')
+        if not rst:
+            print(f"Failed to create user info for user {user_id}")
+    return user_basic_info_exists, user_basic_resume_exists
+
 
 
 class MyBot(fp.PoeBot):
     async def get_response(
         self, request: fp.QueryRequest
     ) -> AsyncIterable[fp.PartialResponse]:
-        
-        user_basic_info_exists = False
-        user_basic_resume_exists = False
-
         user_id = str(request.user_id)
-        print(f"User ID: {user_id}")
-        user_info = get_user_info(user_id)
-        print(f"User Info: {user_info}")
-        if user_info:
-            user_basic_info_exists = True
-            print(f"User {user_id} has registered user info")
-            user_basic_resume_exists = user_info.get('resume_register')
-        else:
-            print(f"User {user_id} has not registered user info")
-            rst = create_user_info(user_id, resume_register=False, voice_enabled=False, language='en')
-            if not rst:
-                print(f"Failed to create user info for user {user_id}")
-        
-        print(f"User {user_id} info status: {user_basic_info_exists}, resume status: {user_basic_resume_exists}")
-        
+        user_basic_info_exists, user_basic_resume_exists = check_user_status(user_id)        
         is_file_captured = False
 
         # request.query 是一个数组，允许获取用户输入的上下文
@@ -396,7 +402,7 @@ class MyBot(fp.PoeBot):
                         file_content = process_plain_text_file(attachment.url)
                         if len(file_content) < 50:
                             yield fp.PartialResponse(text="文本内容过短，{}".format(file_content))
-                            return
+                            continue
                         if not user_basic_resume_exists:
                             llm_processed_content = openai_invoke(resume_summary_prompt, file_content)
                             create_basic_resume(user_id, file_content, llm_processed_content, ["resume"])
@@ -404,18 +410,9 @@ class MyBot(fp.PoeBot):
                             yield fp.PartialResponse(text="已创建简历，简历内容也通过LLM进行了梳理 {}".format(llm_processed_content))
                             continue
                         else:
-                            user_resume = get_basic_resume(user_id)
-                            if not user_resume:
-                                yield fp.PartialResponse(text="未找到用户简历信息 {}".format(user_id))
-                                continue
-                            user_resume = user_resume.get('resume_raw_content')
-                            compare_result = compare_resume_and_jd(user_resume, file_content)
-                            if not compare_result or compare_result == "":
-                                yield fp.PartialResponse(text="简历与岗位描述对比失败")
-                                continue
-                            jd_id, jd_create_rst = create_job_description(user_id, file_content, "text", ["jd"])
-                            compare_id, rst = create_compare_entry(user_id, jd_id, compare_result)
-                            yield fp.PartialResponse(text="简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result))
+                            # compare_succ 失败时，可以进行埋点
+                            compare_succ, compare_rst = compare_jd(user_id, file_content, "text/plain")
+                            yield fp.PartialResponse(text=compare_rst)
                     case "application/pdf":
                         # yield fp.PartialResponse(text=process_pdf_file(attachment.url))
                         pdf_full_content = "".join(process_pdf_file(attachment.url))
@@ -423,7 +420,6 @@ class MyBot(fp.PoeBot):
                         if len(pdf_full_content) < 50:
                             yield fp.PartialResponse(text="No enough resume content detected from the pdf file")
                             continue
-
                         if not user_basic_resume_exists:
                             llm_processed_content = openai_invoke(resume_summary_prompt, pdf_full_content)
                             create_basic_resume(user_id, pdf_full_content, llm_processed_content, ["resume"])
@@ -431,33 +427,21 @@ class MyBot(fp.PoeBot):
                             update_user_info(user_id, resume_register=True)
                             yield fp.PartialResponse(text="Resume content has been registered, and processed by LLM model {}".format(llm_processed_content))
                             continue
-
                         yield fp.PartialResponse(text='resume exists, not need to process again')
+                        continue
                     case "image/jpeg":
                         image_content = detect_text_from_url(attachment.url)
                         if len(image_content) < 20:
                             yield fp.PartialResponse(text="No enough text detected from the image {}".format(image_content))
                             continue
-
                         if not user_basic_resume_exists:
                             yield fp.PartialResponse(text="你还没有创建简历，请先使用 文本[RESUME]上传简历或pdf方式上传个人简历")
                             continue
                         else:
                             # 以下部分内容出现多次，后续需封装成函数
-                            user_resume = get_basic_resume(user_id)
-                            if not user_resume:
-                                yield fp.PartialResponse(text="未找到用户简历信息 {}".format(user_id))
-                                continue
-                            user_resume = user_resume.get('resume_raw_content')
-                            compare_result = compare_resume_and_jd(user_resume, image_content)
-                            if not compare_result or compare_result == "":
-                                yield fp.PartialResponse(text="简历与岗位描述对比失败")
-                                continue
-                            jd_id, jd_create_rst = create_job_description(user_id, image_content, "text", ["jd"])
-                            compare_id, rst = create_compare_entry(user_id, jd_id, compare_result)
-                            yield fp.PartialResponse(text="简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result))
-                            
-
+                            compare_succ, compare_rst = compare_jd(user_id, image_content, "image/jpeg")
+                            yield fp.PartialResponse(text=compare_rst)
+                            continue
                     case _:
                         yield fp.PartialResponse(text=f"Attachment type: {attachment.content_type} is not supported right now")  
 
@@ -490,18 +474,8 @@ class MyBot(fp.PoeBot):
                 case 1:
                     yield fp.PartialResponse(text="你已经创建了简历，目前暂不支持创建多份简历或删除简历，请联系管理员")
                 case 2:
-                    user_resume = get_basic_resume(user_id)
-                    if not user_resume:
-                        yield fp.PartialResponse(text="未找到用户简历信息 {}".format(user_id))
-                    user_resume = user_resume.get('resume_raw_content')
-                    compare_result = compare_resume_and_jd(user_resume, last_message)
-                    if not compare_result or compare_result == "":
-                        yield fp.PartialResponse(text="简历与岗位描述对比失败")
-                    jd_id, jd_create_rst = create_job_description(user_id, last_message, "text", ["jd"])
-                    compare_id, rst = create_compare_entry(user_id, jd_id, compare_result)
-                    yield fp.PartialResponse(text="简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result))
-                            
-                    
+                    compare_succ, compare_rst = compare_jd(user_id, last_message, "text")
+                    yield fp.PartialResponse(text=compare_rst)
 
     
     async def get_settings(self, setting: fp.SettingsRequest) -> fp.SettingsResponse:
