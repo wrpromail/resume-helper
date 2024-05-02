@@ -5,7 +5,6 @@ import requests, time, random, string, os, json, re, uuid, datetime
 
 # third-party tool modules
 from pdfminer.high_level import extract_text
-from langdetect import detect, LangDetectException
 
 # cloud service modules
 import fastapi_poe as fp
@@ -19,6 +18,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from google.cloud import translate_v2 as translate
+from google.cloud import storage
 from google.oauth2.service_account import Credentials
 import firebase_admin
 from firebase_admin import credentials
@@ -26,6 +26,7 @@ from firebase_admin import firestore
 
 GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "SERVICE_ACCOUNT_JSON"
 LOCAL_SERVICE_ACCOUNT_JSON_PATH = "GOOGLE_APPLICATION_CREDENTIALS"
+DEFAULT_STORAGE_BUCKET = "poebot"
 
 
 def read_gcp_cred():
@@ -183,7 +184,7 @@ def create_compare_entry(resume_id, jd_id, compare_result, user_id=None):
 # 项目声明部分
 # todo: 应用名称、依赖等内容需要改为配置化并进行版本管理
 # 将需要的依赖在这里声明，modal 等 serverless 平台为你构建服务需要的运行环境镜像
-REQUIREMENTS = ["fastapi-poe==0.0.36", "PyPDF2==3.0.1", "requests==2.31.0", "langdetect",
+REQUIREMENTS = ["fastapi-poe==0.0.36", "PyPDF2==3.0.1", "requests==2.31.0", "google-cloud-storage",
                 "langchain-openai", "langchain","google-cloud-translate", "google-cloud-vision","pdfminer.six", "firebase-admin"]
 image = Image.debian_slim().pip_install(*REQUIREMENTS)
 # 这里是对 app 的命名， modal 上的监控面板通过该名称区分不同的API服务
@@ -270,13 +271,25 @@ def sentence_translate_process(text: str):
     translation = translate_client.translate(text, target_language="zh-CN")
     return translation["translatedText"]
 
+def upload_file_to_gcp_storage(url, suffix, bucket_name=DEFAULT_STORAGE_BUCKET):
+    file_name = download_files(url, suffix, 0)
+    if not file_name:
+        return None 
+    sc = storage.Client(credentials=gcp_cred)
+    bucket = sc.bucket(bucket_name)
+    blob = bucket.blob(file_name)
+    blob.upload_from_filename(file_name)
+    os.remove(file_name)
+    return blob.public_url
+    
+
 
 # take care of max_size param, unit is 256 not 1024
 def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4):
     print("Downloading file from {}".format(url))
     response = requests.head(url)
     total_length = int(response.headers.get('content-length', 0))
-    if total_length > max_size:
+    if max_size > 0 and total_length > max_size:
         print("file size is too large, max size is 1MB, file size is {}".format(total_length))
         return None
 
@@ -371,6 +384,14 @@ class MyBot(fp.PoeBot):
             for attachment in last_query.attachments:
                 print(f"Attachment Content-Type: {attachment.content_type}")
                 match attachment.content_type:
+                    case "text/html":
+                        storage_blob_url = upload_file_to_gcp_storage(attachment.url, '.html')
+                        if not storage_blob_url:
+                            yield fp.PartialResponse(text="获取 html 文件失败")
+                            continue
+                        else:
+                            yield fp.PartialResponse(text="已上传文件到GCP存储 {}".format(storage_blob_url))
+                            continue
                     case "text/plain":
                         file_content = process_plain_text_file(attachment.url)
                         if len(file_content) < 50:
@@ -395,8 +416,6 @@ class MyBot(fp.PoeBot):
                             jd_id, jd_create_rst = create_job_description(user_id, file_content, "text", ["jd"])
                             compare_id, rst = create_compare_entry(user_id, jd_id, compare_result)
                             yield fp.PartialResponse(text="简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result))
-                            
-
                     case "application/pdf":
                         # yield fp.PartialResponse(text=process_pdf_file(attachment.url))
                         pdf_full_content = "".join(process_pdf_file(attachment.url))
