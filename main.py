@@ -28,6 +28,7 @@ from firebase_admin import firestore
 GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "SERVICE_ACCOUNT_JSON"
 LOCAL_SERVICE_ACCOUNT_JSON_PATH = "GOOGLE_APPLICATION_CREDENTIALS"
 DEFAULT_STORAGE_BUCKET = "poebot"
+MODAL_SERVICE_NAME = 'resume-helper'
 
 
 def read_gcp_cred():
@@ -140,7 +141,6 @@ def get_basic_resume(user_id, resume_id=None):
     # 当使用 firestore 的索引时，需要先在 GCP 控制台进行创建
     query = col.where('user_id','==', user_id).order_by('created_at').limit(1)
     results = query.stream()
-
     for result in results:
         return result.to_dict()
     return None
@@ -148,7 +148,7 @@ def get_basic_resume(user_id, resume_id=None):
 def create_job_description(created_by, text_content, source, tags):
     doc_id = str(uuid.uuid4())
     jd_ref = db.collection('job_description').document(doc_id)
-    timestamp_now = datetime.datetime.utcnow()
+    timestamp_now = datetime.datetime.now(tz=timezone.utc)
     update_data = {}
     if text_content:
         update_data['text_content'] = text_content
@@ -167,7 +167,7 @@ def create_job_description(created_by, text_content, source, tags):
 def create_compare_entry(resume_id, jd_id, compare_result, user_id=None):
     doc_id = str(uuid.uuid4())
     compare_ref = db.collection('compare_result').document(doc_id)
-    timestamp_now = datetime.datetime.utcnow()
+    timestamp_now = datetime.datetime.now(tz=timezone.utc)
     update_data = {}
     update_data['resume_id'] = resume_id
     update_data['jd_id'] = jd_id
@@ -187,9 +187,8 @@ REQUIREMENTS = ["fastapi-poe==0.0.36", "PyPDF2==3.0.1", "requests==2.31.0", "goo
                 "langchain-openai", "langchain","google-cloud-translate", "google-cloud-vision","pdfminer.six", "firebase-admin"]
 image = Image.debian_slim().pip_install(*REQUIREMENTS)
 # 这里是对 app 的命名， modal 上的监控面板通过该名称区分不同的API服务
-stub = Stub("resume-compare")
-# 声明需要使用的 volume 名称
-vol = Volume.from_name("my-volume")
+stub = Stub(MODAL_SERVICE_NAME)
+# modal 还允许声明挂载的卷，但是如果使用云服务，在需要固定化数据时也应考虑保存至云存储上，方便使用其他 IaC 工具进行迁移
 
 # 常量管理
 LANGDETECT_SUPPORT = ["en", "ja"]
@@ -216,6 +215,7 @@ def process_plain_text_file(url: str):
     os.remove(temp_file_name)
     return content
 
+# langchain parser 实现案例
 class ResumeCompare(BaseModel):
     Reqs: str = Field(description="精简的岗位要求的技能")
     Pros: str = Field(description="简历拥有者过往经验相较岗位的优势")
@@ -241,10 +241,6 @@ compare_chain = prompt | model | parser
 def compare_resume_and_jd(resume_content, jd_content):
     rst = compare_chain.invoke({"resume": resume_content, "jd": jd_content})
     return rst
-    
-
-
-
 
 # 文本输入处理逻辑
 # 调用 llm 对于法语句子产生特定的处理
@@ -281,7 +277,6 @@ def upload_file_to_gcp_storage(url, suffix, bucket_name=DEFAULT_STORAGE_BUCKET):
     os.remove(file_name)
     return blob.public_url
     
-
 
 # take care of max_size param, unit is 256 not 1024
 def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4):
@@ -336,6 +331,8 @@ def plain_text_intent(text: str):
     # 创建岗位描述
     if text.lower().startswith("[jd]"):
         return 2
+    if text.lower().startswith("[test]"):
+        return 9
     # 其他内容
     return 0
 
@@ -356,7 +353,6 @@ def compare_jd(user_id, jd_content, jd_source_type):
 def check_user_status(user_id):
     user_basic_info_exists = False
     user_basic_resume_exists = False
-
     
     print(f"User ID: {user_id}")
     user_info = get_user_info(user_id)
@@ -371,7 +367,6 @@ def check_user_status(user_id):
         if not rst:
             print(f"Failed to create user info for user {user_id}")
     return user_basic_info_exists, user_basic_resume_exists
-
 
 
 class MyBot(fp.PoeBot):
@@ -448,6 +443,10 @@ class MyBot(fp.PoeBot):
         # 处理用户的文本输入
         last_message = last_query.content
         user_intent = plain_text_intent(last_message)
+        if user_intent == 9:
+            yield fp.PartialResponse(text="# Title one ## Title Two ### Title Three **Bold Character**")
+            return
+
         # 用户还没有创建简历
         if user_intent == 0:
             yield fp.PartialResponse(text="未识别命令，echoserver返回 {}".format(last_message))
@@ -482,8 +481,7 @@ class MyBot(fp.PoeBot):
         return fp.SettingsResponse(allow_attachments=True, server_bot_dependencies={"GPT-3.5-Turbo": 1})
 
 # 全局注入业务需要使用的 secrets，这里 secret 的名称就是你在 modal 等 serverless 平台上注册的 secret 名称
-@stub.function(secrets=[modal.Secret.from_name("my-googlecloud-secret"),modal.Secret.from_name("my-openai-secret")],
-               image=image,volumes={"/data": vol})
+@stub.function(secrets=[modal.Secret.from_name("my-googlecloud-secret"), modal.Secret.from_name("my-openai-secret")], image=image)
 @asgi_app()
 def fastapi_app():
     bot = MyBot()
