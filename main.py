@@ -29,6 +29,7 @@ GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "SERVICE_ACCOUNT_JSON"
 LOCAL_SERVICE_ACCOUNT_JSON_PATH = "GOOGLE_APPLICATION_CREDENTIALS"
 DEFAULT_STORAGE_BUCKET = "poebot"
 MODAL_SERVICE_NAME = 'resume-helper'
+debug_mode = True if os.environ.get('DEBUG', None) else False
 
 
 def read_gcp_cred():
@@ -37,13 +38,15 @@ def read_gcp_cred():
     ACCOUNT_JSON_CONTENT = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, None)
     if not ACCOUNT_JSON_CONTENT:
         file_path = os.environ.get(LOCAL_SERVICE_ACCOUNT_JSON_PATH)
-        print(f"Service Account JSON Path: {file_path}")
+        if debug_mode:
+            print(f"Service Account JSON Path: {file_path}")
         gcp_cred = Credentials.from_service_account_file(file_path)
         fs_cred = credentials.Certificate(file_path)
         return gcp_cred, fs_cred
-    print(f"Service Account JSON: {ACCOUNT_JSON_CONTENT}")
     service_account_info = json.loads(ACCOUNT_JSON_CONTENT)
-    print(f"Service Account Info: {service_account_info}")
+    if debug_mode:
+        print(f"Service Account JSON: {ACCOUNT_JSON_CONTENT}")
+        print(f"Service Account Info: {service_account_info}")
     gcp_cred = Credentials.from_service_account_info(service_account_info)
     fs_cred = credentials.Certificate(service_account_info)
     return gcp_cred, fs_cred
@@ -370,6 +373,18 @@ def check_user_status(user_id):
 
 
 class MyBot(fp.PoeBot):
+    # feedback content sample
+    # Feedback request with context json {"version":"1.1","type":"report_feedback","message_id":"m-000000xy92mwd91u86o5mn906klq5977","user_id":"u-000000xy92lqwx4nhina157rjs6s75re","conversation_id":"c-000000xy92mwd91sbt5dy11hu5vlqu4o","feedback_type":"dislike"}
+    # Feedback request json {"version":"1.1","type":"report_feedback","message_id":"m-000000xy92mwd91u86o5mn906klq5977","user_id":"u-000000xy92lqwx4nhina157rjs6s75re","conversation_id":"c-000000xy92mwd91sbt5dy11hu5vlqu4o","feedback_type":"dislike"}
+
+    #async def on_feedback_with_context(self, feedback_request: fp.ReportFeedbackRequest, context: fp.RequestContext) -> None:
+    #    print("Feedback request with context json {}".format(feedback_request.model_dump_json()))
+    #    return await super().on_feedback_with_context(feedback_request, context)
+    
+    async def on_feedback(self, feedback_request: fp.ReportFeedbackRequest) -> None:
+        print("Feedback request json {}".format(feedback_request.model_dump_json()))
+        return await super().on_feedback(feedback_request)
+
     async def get_response(
         self, request: fp.QueryRequest
     ) -> AsyncIterable[fp.PartialResponse]:
@@ -443,8 +458,10 @@ class MyBot(fp.PoeBot):
         # 处理用户的文本输入
         last_message = last_query.content
         user_intent = plain_text_intent(last_message)
+        print(f"User request_id {request.message_id} Intent: {user_intent}")
+
         if user_intent == 9:
-            yield fp.PartialResponse(text="# Title one ## Title Two ### Title Three **Bold Character**")
+            yield fp.PartialResponse(text="# Title one \n## Title Two \n### Title Three \n**Bold Character**")
             return
 
         # 用户还没有创建简历
