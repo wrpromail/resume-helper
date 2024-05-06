@@ -148,7 +148,7 @@ def get_basic_resume(user_id, resume_id=None):
         return result.to_dict()
     return None
 
-def create_job_description(created_by, text_content, source, tags):
+def create_job_description(user_id, text_content, source, tags):
     doc_id = str(uuid.uuid4())
     jd_ref = db.collection('job_description').document(doc_id)
     timestamp_now = datetime.datetime.now(tz=timezone.utc)
@@ -160,7 +160,7 @@ def create_job_description(created_by, text_content, source, tags):
     if tags:
         update_data['tags'] = tags
     if update_data:
-        update_data['created_by'] = created_by
+        update_data['user_id'] = user_id
         update_data['created_at'] = timestamp_now
         update_data['updated_at'] = timestamp_now
         rst = jd_ref.set(update_data)
@@ -282,7 +282,7 @@ def upload_file_to_gcp_storage(url, suffix, bucket_name=DEFAULT_STORAGE_BUCKET):
     
 
 # take care of max_size param, unit is 256 not 1024
-def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4):
+def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
     print("Downloading file from {}".format(url))
     response = requests.head(url)
     total_length = int(response.headers.get('content-length', 0))
@@ -310,6 +310,8 @@ def process_pdf_file(url: str):
         print("Failed to download the file for url {}".format(url))
         return None
     text = extract_text(file_path)
+    if text is not None:
+        print("process_pdf_file content length", len(text))
     content = '\n'.join([line for line in text.splitlines() if line.strip()])
     os.remove(file_path)
     return content
@@ -350,7 +352,7 @@ def compare_jd(user_id, jd_content, jd_source_type):
     if not compare_result or compare_result == "":
         return False, "简历与岗位描述对比失败"
     jd_id, jd_create_rst = create_job_description(user_id, jd_content, jd_source_type, ["jd"])
-    compare_id, compare_entry_create_rst = create_compare_entry(user_id, jd_id, compare_result)
+    compare_id, compare_entry_create_rst = create_compare_entry(user_id, jd_id, compare_result, user_id)
     return True, "简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result)
 
 def check_user_status(user_id):
@@ -425,7 +427,10 @@ class MyBot(fp.PoeBot):
                             yield fp.PartialResponse(text=compare_rst)
                     case "application/pdf":
                         # yield fp.PartialResponse(text=process_pdf_file(attachment.url))
-                        pdf_full_content = "".join(process_pdf_file(attachment.url))
+                        
+                        pdf_file_content = process_pdf_file(attachment.url)
+                        pdf_full_content = "".join(pdf_file_content)
+
                         # todo 这里需要校验 pdf_full_content 是否是简历内容
                         if len(pdf_full_content) < 50:
                             yield fp.PartialResponse(text="No enough resume content detected from the pdf file")
@@ -466,6 +471,9 @@ class MyBot(fp.PoeBot):
 
         # 用户还没有创建简历
         if user_intent == 0:
+            # 只传递了文件，没有传递文本
+            if is_file_captured:
+                return
             yield fp.PartialResponse(text="未识别命令，echoserver返回 {}".format(last_message))
             return
         else:
