@@ -6,14 +6,14 @@ const { StringOutputParser } = require("@langchain/core/output_parsers");
 const fs = require('fs').promises;
 
 const model = new ChatOpenAI({modelName: "gpt-3.5-turbo-1106"});
-const prompt = ChatPromptTemplate.fromTemplate(`请根据下面的工作简历，提取出若干项具体的工作内容 {resume}?`)
+const prompt = ChatPromptTemplate.fromTemplate(`请根据下面的工作简历，提取出若干项具体的工作内容，请不要生成其他文本内容 {resume}?`)
 const outputParser = new StringOutputParser();
 const chain = prompt.pipe(model).pipe(outputParser);
 
 async function handleChainInvoke(resumeContent) {
     try {
         const response = await chain.invoke({
-            resume: sampleResume,
+            resume: resumeContent,
         });
         return response;
     } catch (error) {
@@ -22,7 +22,7 @@ async function handleChainInvoke(resumeContent) {
     }
 }
 
-functions.http('extractText', async (req, res) => {
+functions.http('splitResume', async (req, res) => {
     if (req.method !== 'POST') {
         return res.status(405).send('Method Not Allowed');
     }
