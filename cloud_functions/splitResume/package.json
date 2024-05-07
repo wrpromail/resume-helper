@@ -1,0 +1,8 @@
+{
+    "dependencies": {
+      "@google-cloud/functions-framework": "^3.0.0",
+      "langchain": "^0.1.36",
+      "pdf-parse": "^1.1.1"
+    }
+  }
+  
