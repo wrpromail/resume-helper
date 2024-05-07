@@ -1,7 +1,6 @@
 __pycache__
 TAM.pdf
 english_generator.py 
-resume_compare.py 
 util_test.py
 firebase_test.py
 local_secret.sh
