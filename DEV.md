@@ -6,6 +6,7 @@ provide several ways to load data from html file.
 static methods: UnstructuredHTMLLoader, BSHTMLLoader
 SaaS methods: SpiderLoader, FireCrawlLoader, AzureAIDocumentIntelligenceLoader
 
+## cloud functions
 ### purge user data (for testing)
 deploy deleteUserData.js as cloud function, and call it by curl
 ```
