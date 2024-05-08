@@ -19,6 +19,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
 from google.cloud import translate_v2 as translate
 from google.cloud import storage
+from google.cloud import vision 
 from google.oauth2.service_account import Credentials
 from firebase_admin import credentials, firestore, initialize_app
 
@@ -184,16 +185,13 @@ def create_compare_entry(resume_id, jd_id, compare_result, user_id=None):
 # 项目声明部分
 # todo: 应用名称、依赖等内容需要改为配置化并进行版本管理
 # 将需要的依赖在这里声明，modal 等 serverless 平台为你构建服务需要的运行环境镜像
-REQUIREMENTS = ["fastapi-poe==0.0.36", "PyPDF2==3.0.1", "requests==2.31.0", "google-cloud-storage",
-                "langchain-openai", "langchain","google-cloud-translate", "google-cloud-vision","pdfminer.six", "firebase-admin"]
+REQUIREMENTS = ["fastapi-poe==0.0.36", "requests==2.31.0", "google-cloud-storage",
+                "langchain-openai", "langchain","google-cloud-translate",
+                "google-cloud-vision","pdfminer.six", "firebase-admin"]
 image = Image.debian_slim().pip_install(*REQUIREMENTS)
 # 这里是对 app 的命名， modal 上的监控面板通过该名称区分不同的API服务
 stub = Stub(MODAL_SERVICE_NAME)
 # modal 还允许声明挂载的卷，但是如果使用云服务，在需要固定化数据时也应考虑保存至云存储上，方便使用其他 IaC 工具进行迁移
-
-# 常量管理
-LANGDETECT_SUPPORT = ["en", "ja"]
-
 
 # utils 
 def generate_random_file_name():
@@ -278,7 +276,6 @@ def upload_file_to_gcp_storage(url, suffix, bucket_name=DEFAULT_STORAGE_BUCKET):
     os.remove(file_name)
     return blob.public_url
     
-
 # take care of max_size param, unit is 256 not 1024
 def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
     print(f"Downloading file from {url}")
@@ -313,8 +310,6 @@ def process_pdf_file(url: str):
     content = '\n'.join([line for line in text.splitlines() if line.strip()])
     os.remove(file_path)
     return content
-
-from google.cloud import vision 
 
 def detect_text_from_url(url):
     client = vision.ImageAnnotatorClient(credentials=gcp_cred)

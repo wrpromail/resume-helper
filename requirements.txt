@@ -1,3 +1,10 @@
 langchain-core
-pdfminer
+langchain
+pdfminer.six
 modal-client
+fastapi-poe
+google-cloud-storage
+langchain-openai
+google-cloud-translate
+google-cloud-vision
+firebase-admin
