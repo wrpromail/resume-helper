@@ -31,10 +31,10 @@ prompt = PromptTemplate(
 chain = prompt | llm | parser
 
 # fill this content when testing
-resume1 = ""
-jd1 = ""
+Resume1 = ""
+Jd1 = ""
 
 
 if __name__ == "__main__":
-    rst = chain.invoke({"resume": resume1, "jd": jd1})
+    rst = chain.invoke({"resume": Resume1, "jd": Jd1})
     print(rst)

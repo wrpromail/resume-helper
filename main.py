@@ -1,35 +1,32 @@
 from __future__ import annotations
 from typing import AsyncIterable
 # built-in modules
-import requests, time, random, string, os, json, uuid, datetime
+import time, random, string, os, json, uuid, datetime
 from datetime import timezone
-
-# third-party tool modules
-from pdfminer.high_level import extract_text
 
 # cloud service modules
 import fastapi_poe as fp
+
+# third-party tool modules
+import requests
+from pdfminer.high_level import extract_text
 import modal
-from modal import asgi_app
-from modal import Image, Stub, Volume
+from modal import Image, Stub, asgi_app
 from langchain.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_openai import ChatOpenAI
 from google.cloud import translate_v2 as translate
 from google.cloud import storage
 from google.oauth2.service_account import Credentials
-import firebase_admin
-from firebase_admin import credentials
-from firebase_admin import firestore
+from firebase_admin import credentials, firestore, initialize_app
 
 GOOGLE_SERVICE_ACCOUNT_JSON_ENV = "SERVICE_ACCOUNT_JSON"
 LOCAL_SERVICE_ACCOUNT_JSON_PATH = "GOOGLE_APPLICATION_CREDENTIALS"
 DEFAULT_STORAGE_BUCKET = "poebot"
 MODAL_SERVICE_NAME = 'resume-helper'
-debug_mode = True if os.environ.get('DEBUG', None) else False
+DEBUG_MODE = True if os.environ.get('DEBUG', None) else False
 
 
 def read_gcp_cred():
@@ -38,13 +35,13 @@ def read_gcp_cred():
     ACCOUNT_JSON_CONTENT = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, None)
     if not ACCOUNT_JSON_CONTENT:
         file_path = os.environ.get(LOCAL_SERVICE_ACCOUNT_JSON_PATH)
-        if debug_mode:
+        if DEBUG_MODE:
             print(f"Service Account JSON Path: {file_path}")
         gcp_cred = Credentials.from_service_account_file(file_path)
         fs_cred = credentials.Certificate(file_path)
         return gcp_cred, fs_cred
     service_account_info = json.loads(ACCOUNT_JSON_CONTENT)
-    if debug_mode:
+    if DEBUG_MODE:
         print(f"Service Account JSON: {ACCOUNT_JSON_CONTENT}")
         print(f"Service Account Info: {service_account_info}")
     gcp_cred = Credentials.from_service_account_info(service_account_info)
@@ -52,11 +49,12 @@ def read_gcp_cred():
     return gcp_cred, fs_cred
 
 gcp_cred, fs_cred = read_gcp_cred()
-print(f"Google Cloud Credentials: {gcp_cred}")
+if gcp_cred is not None:
+    print(f"Google Cloud Credentials: {gcp_cred}")
 
 # 机器人所使用的一些API服务密钥是通过 modal 平台管理的，而其环境变量是用户定义的
 
-staging_app = firebase_admin.initialize_app(credential=fs_cred, name='myfs')
+staging_app = initialize_app(credential=fs_cred, name='myfs')
 db = firestore.client(app=staging_app)
 
 def create_user_info(user_id, resume_register=None, voice_enabled=None, language=None):
@@ -213,7 +211,7 @@ def process_plain_text_file(url: str):
     content = response.content.decode('utf-8')
     content = content.replace("", "")
     temp_file_name = generate_random_file_name()
-    with open("{}".format(temp_file_name), "wb") as f:
+    with open(f"{temp_file_name}", "wb") as f:
         f.write(content.encode())
     os.remove(temp_file_name)
     return content
@@ -283,11 +281,11 @@ def upload_file_to_gcp_storage(url, suffix, bucket_name=DEFAULT_STORAGE_BUCKET):
 
 # take care of max_size param, unit is 256 not 1024
 def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
-    print("Downloading file from {}".format(url))
+    print(f"Downloading file from {url}")
     response = requests.head(url)
     total_length = int(response.headers.get('content-length', 0))
     if max_size > 0 and total_length > max_size:
-        print("file size is too large, max size is 1MB, file size is {}".format(total_length))
+        print(f"file size is too large, max size is 1MB, file size is {total_length}")
         return None
 
     # 文件大小合适，开始下载
@@ -307,7 +305,7 @@ def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
 def process_pdf_file(url: str):
     file_path = download_files(url,'.pdf')
     if file_path is None:
-        print("Failed to download the file for url {}".format(url))
+        print(f"Failed to download the file for url {url}")
         return None
     text = extract_text(file_path)
     if text is not None:
@@ -345,15 +343,15 @@ def plain_text_intent(text: str):
 def compare_jd(user_id, jd_content, jd_source_type):
     user_resume = get_basic_resume(user_id)
     if not user_resume:
-        return False, "未找到用户简历信息 {}".format(user_id)
+        return False, f"未找到用户简历信息 {user_id}"
     user_resume = user_resume.get('resume_raw_content')
     compare_result = compare_resume_and_jd(user_resume, jd_content)
 
     if not compare_result or compare_result == "":
         return False, "简历与岗位描述对比失败"
-    jd_id, jd_create_rst = create_job_description(user_id, jd_content, jd_source_type, ["jd"])
-    compare_id, compare_entry_create_rst = create_compare_entry(user_id, jd_id, compare_result, user_id)
-    return True, "简历与岗位描述对比结果已生成，结果ID: {} ， 内容:{}，更多相关信息也会后台自动生成".format(compare_id, compare_result)
+    jd_id, _ = create_job_description(user_id, jd_content, jd_source_type, ["jd"])
+    compare_id, _ = create_compare_entry(user_id, jd_id, compare_result, user_id)
+    return True, f"简历与岗位描述对比结果已生成，结果ID: {compare_id} ， 内容:{compare_result}，更多相关信息也会后台自动生成"
 
 def check_user_status(user_id):
     user_basic_info_exists = False
@@ -384,14 +382,16 @@ class MyBot(fp.PoeBot):
     #    return await super().on_feedback_with_context(feedback_request, context)
     
     async def on_feedback(self, feedback_request: fp.ReportFeedbackRequest) -> None:
-        print("Feedback request json {}".format(feedback_request.model_dump_json()))
+        json_content = feedback_request.model_dump_json()
+        print(f"Feedback request json {json_content}")
         return await super().on_feedback(feedback_request)
 
     async def get_response(
         self, request: fp.QueryRequest
     ) -> AsyncIterable[fp.PartialResponse]:
         user_id = str(request.user_id)
-        user_basic_info_exists, user_basic_resume_exists = check_user_status(user_id)        
+        # 用户信息是否存在，用户基础简历是否存在
+        _, user_basic_resume_exists = check_user_status(user_id)        
         is_file_captured = False
 
         # request.query 是一个数组，允许获取用户输入的上下文
@@ -408,22 +408,22 @@ class MyBot(fp.PoeBot):
                             yield fp.PartialResponse(text="获取 html 文件失败")
                             continue
                         else:
-                            yield fp.PartialResponse(text="已上传文件到GCP存储 {}".format(storage_blob_url))
+                            yield fp.PartialResponse(text=f"已上传文件到GCP存储 {storage_blob_url}")
                             continue
                     case "text/plain":
                         file_content = process_plain_text_file(attachment.url)
                         if len(file_content) < 50:
-                            yield fp.PartialResponse(text="文本内容过短，{}".format(file_content))
+                            yield fp.PartialResponse(text=f"文本内容过短{file_content}")
                             continue
                         if not user_basic_resume_exists:
                             llm_processed_content = openai_invoke(resume_summary_prompt, file_content)
                             create_basic_resume(user_id, file_content, llm_processed_content, ["resume"])
                             update_user_info(user_id, resume_register=True)
-                            yield fp.PartialResponse(text="已创建简历，简历内容也通过LLM进行了梳理 {}".format(llm_processed_content))
+                            yield fp.PartialResponse(text=f"已创建简历，简历内容也通过LLM进行了梳理{llm_processed_content}")
                             continue
                         else:
                             # compare_succ 失败时，可以进行埋点
-                            compare_succ, compare_rst = compare_jd(user_id, file_content, "text/plain")
+                            _, compare_rst = compare_jd(user_id, file_content, "text/plain")
                             yield fp.PartialResponse(text=compare_rst)
                     case "application/pdf":
                         # yield fp.PartialResponse(text=process_pdf_file(attachment.url))
@@ -440,21 +440,21 @@ class MyBot(fp.PoeBot):
                             create_basic_resume(user_id, pdf_full_content, llm_processed_content, ["resume"])
                             # todo 这里存在事务问题，如果创建简历成功，但是更新用户信息失败，会导致用户信息和简历不一致
                             update_user_info(user_id, resume_register=True)
-                            yield fp.PartialResponse(text="Resume content has been registered, and processed by LLM model {}".format(llm_processed_content))
+                            yield fp.PartialResponse(text=f"Resume content has been registered, and processed by LLM model {llm_processed_content}")
                             continue
                         yield fp.PartialResponse(text='resume exists, not need to process again')
                         continue
                     case "image/jpeg":
                         image_content = detect_text_from_url(attachment.url)
                         if len(image_content) < 20:
-                            yield fp.PartialResponse(text="No enough text detected from the image {}".format(image_content))
+                            yield fp.PartialResponse(text=f"No enough text detected from the image {image_content}")
                             continue
                         if not user_basic_resume_exists:
                             yield fp.PartialResponse(text="你还没有创建简历，请先使用 文本[RESUME]上传简历或pdf方式上传个人简历")
                             continue
                         else:
                             # 以下部分内容出现多次，后续需封装成函数
-                            compare_succ, compare_rst = compare_jd(user_id, image_content, "image/jpeg")
+                            _, compare_rst = compare_jd(user_id, image_content, "image/jpeg")
                             yield fp.PartialResponse(text=compare_rst)
                             continue
                     case _:
@@ -474,7 +474,7 @@ class MyBot(fp.PoeBot):
             # 只传递了文件，没有传递文本
             if is_file_captured:
                 return
-            yield fp.PartialResponse(text="未识别命令，echoserver返回 {}".format(last_message))
+            yield fp.PartialResponse(text=f"未识别命令，echoserver返回 {last_message}")
             return
         else:
             if len(last_message) < 50:
@@ -489,7 +489,7 @@ class MyBot(fp.PoeBot):
                     create_basic_resume(user_id, pdf_full_content, llm_processed_content, ["resume"])
                     # todo 这里存在事务问题，如果创建简历成功，但是更新用户信息失败，会导致用户信息和简历不一致
                     update_user_info(user_id, resume_register=True)
-                    yield fp.PartialResponse(text="已创建简历，简历内容也通过LLM进行了梳理 {}".format(llm_processed_content))
+                    yield fp.PartialResponse(text=f"已创建简历，简历内容也通过LLM进行了梳理 {llm_processed_content}")
                 case 2:
                     yield fp.PartialResponse(text="你还没有创建简历，请先使用 文本[RESUME]上传简历或pdf方式上传个人简历")
                     return 
@@ -498,11 +498,12 @@ class MyBot(fp.PoeBot):
                 case 1:
                     yield fp.PartialResponse(text="你已经创建了简历，目前暂不支持创建多份简历或删除简历，请联系管理员")
                 case 2:
-                    compare_succ, compare_rst = compare_jd(user_id, last_message, "text")
+                    _, compare_rst = compare_jd(user_id, last_message, "text")
                     yield fp.PartialResponse(text=compare_rst)
 
     
     async def get_settings(self, setting: fp.SettingsRequest) -> fp.SettingsResponse:
+        print("Settings request: ", setting.model_dump())
         return fp.SettingsResponse(allow_attachments=True, server_bot_dependencies={"GPT-3.5-Turbo": 1})
 
 # 全局注入业务需要使用的 secrets，这里 secret 的名称就是你在 modal 等 serverless 平台上注册的 secret 名称
