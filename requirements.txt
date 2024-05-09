@@ -1,3 +1,13 @@
 langchain-core
-pdfminer
+langchain
+langsmith
+pdfminer.six
 modal-client
+fastapi-poe
+google-cloud-storage
+langchain-openai
+openai
+langchain-mistralai
+google-cloud-translate
+google-cloud-vision
+firebase-admin
