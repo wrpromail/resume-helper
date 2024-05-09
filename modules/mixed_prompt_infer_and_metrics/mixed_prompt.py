@@ -1,6 +1,6 @@
 import os
 from enum import Enum
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from langchain.output_parsers.enum import EnumOutputParser
 from langchain.output_parsers import ResponseSchema, StructuredOutputParser
@@ -55,14 +55,14 @@ class EnumParserPrompt:
         return self.chain.invoke({"input": inp}, config={"callbacks": callbacks})
     
 model_name = os.getenv("MISTRAL_MODEL_NAME","open-mistral-7b")
-llm = ChatMistralAI(model_name=model_name)
+llm_instance = ChatMistralAI(model_name=model_name)
 #llm = wrap_openai(ChatOpenAI(temperature=0.2))
 
 
 sd = {"id":"uuid of the entity, or like part of the id", 
       "entity_name":"what id of entity represents",
-      "time_range":"the time range of users\s query"}
-spp = StructuredParserPrompt(llm, sd, "answer the users question as best as possible.")
+      "time_range":"the time range of users' query"}
+spp = StructuredParserPrompt(llm_instance, sd, "answer the users question as best as possible.")
 
 
 class UserIntent(Enum):
@@ -76,7 +76,7 @@ class UserIntent(Enum):
     COMPARE_RESUME_AND_JOB_DESCRIPTION = "compare_resume_and_job_description"
     GENERATE_LANGUAGE_SENTENCE_BY_RESUME = "generate_language_sentence_by_resume"
 
-epp = EnumParserPrompt(llm, UserIntent, "What user want to do by his instruction? only reply instruction but not other extra content.")
+epp = EnumParserPrompt(llm_instance, UserIntent, "What user want to do by his instruction? only reply instruction but not other extra content.")
 
 def detect_intent(input_text):
     return epp.invoke(input_text)
@@ -84,8 +84,6 @@ def detect_intent(input_text):
 def extract_entities(input_text):
     return spp.invoke(input_text)
 
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def run_prompt(input_text):
     with ThreadPoolExecutor(max_workers=2) as executor:
