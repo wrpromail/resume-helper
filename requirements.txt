@@ -5,6 +5,7 @@ modal-client
 fastapi-poe
 google-cloud-storage
 langchain-openai
+langchain-mistralai
 google-cloud-translate
 google-cloud-vision
 firebase-admin
