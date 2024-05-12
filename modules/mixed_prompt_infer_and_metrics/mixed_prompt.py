@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from langchain.output_parsers.enum import EnumOutputParser
 from langchain.output_parsers import ResponseSchema, StructuredOutputParser
 from langchain_mistralai.chat_models import ChatMistralAI
-# from langchain_openai import ChatOpenAI
+#from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain.callbacks import LangChainTracer
 from langsmith import Client 
@@ -56,7 +56,7 @@ class EnumParserPrompt:
     
 model_name = os.getenv("MISTRAL_MODEL_NAME","open-mistral-7b")
 llm_instance = ChatMistralAI(model_name=model_name)
-#llm = wrap_openai(ChatOpenAI(temperature=0.2))
+#llm_instance = ChatOpenAI(temperature=0.2)
 
 
 sd = {"id":"uuid of the entity, or like part of the id", 
@@ -84,7 +84,6 @@ def detect_intent(input_text):
 def extract_entities(input_text):
     return spp.invoke(input_text)
 
-
 def run_prompt(input_text):
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_intent = executor.submit(detect_intent, input_text)
@@ -104,3 +103,5 @@ if __name__ == "__main__":
     user_input = "我要查看id为 cd1482c8-2242 开头的简历"
     rst = run_prompt(user_input)
     print(rst)
+    for k,v in rst.items():
+        print(dir(v))
