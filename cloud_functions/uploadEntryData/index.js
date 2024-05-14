@@ -8,6 +8,7 @@ const DEFAULT_COLLECTION = process.env.DEFAULT_COLLECTION || 'feedback';
 
 const dataEntrySchema = Joi.object({
     entry_id: Joi.string().optional(),
+    entry_type: Joi.string().required(),
 }).unknown(true);
 
 functions.http('uploadDataEntry', async (req, res) => {
@@ -22,6 +23,7 @@ functions.http('uploadDataEntry', async (req, res) => {
 
 async function handlePostRequest(req, res) {
     try {
+        console.log('Request Body:', JSON.stringify(req.body, null, 2).substring(0,50));
         const collectionName = req.body.collection_name || DEFAULT_COLLECTION;
         const data = req.body.payload;
 
@@ -34,13 +36,15 @@ async function handlePostRequest(req, res) {
             res.status(400).json({ error: `Validation error: ${error.details.map(d => d.message).join(', ')}` });
             return;
         }
+        console.log('Validated Data:', value);
         if (Array.isArray(value)) {
             await handleBatchWrite(value, collectionName);
             res.status(200).json({ message: 'Batch data written to Firestore successfully!' });
         } else {
             const entryId = value.entry_id || uuidv4();
             const docRef = db.collection(collectionName).doc(entryId);
-            await docRef.set(value);
+            const writeResult = await docRef.set(value);
+            console.log('Write Result:', writeResult);
             res.status(200).json({ message: 'Data written to Firestore successfully!' });
         }
     } catch (error) {
@@ -54,5 +58,6 @@ async function handleBatchWrite(dataArray, collectionName) {
         const docRef = db.collection(collectionName).doc(item.entry_id || uuidv4());
         batch.set(docRef, item);
     });
-    await batch.commit();
+    const batchWriteResult = await batch.commit();
+    console.log('Batch Write Result:', batchWriteResult);
 }
