@@ -8,6 +8,8 @@ google-cloud-storage
 langchain-openai
 openai
 langchain-mistralai
+langchain-google-vertexai
+google-cloud-bigquery
 google-cloud-translate
 google-cloud-vision
 firebase-admin

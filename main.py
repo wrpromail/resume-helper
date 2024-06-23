@@ -33,17 +33,17 @@ DEBUG_MODE = True if os.environ.get('DEBUG', None) else False
 def read_gcp_cred():
     gcp_cred = None
     fs_cred = None
-    ACCOUNT_JSON_CONTENT = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, None)
-    if not ACCOUNT_JSON_CONTENT:
+    account_json_content = os.environ.get(GOOGLE_SERVICE_ACCOUNT_JSON_ENV, None)
+    if not account_json_content:
         file_path = os.environ.get(LOCAL_SERVICE_ACCOUNT_JSON_PATH)
         if DEBUG_MODE:
             print(f"Service Account JSON Path: {file_path}")
         gcp_cred = Credentials.from_service_account_file(file_path)
         fs_cred = credentials.Certificate(file_path)
         return gcp_cred, fs_cred
-    service_account_info = json.loads(ACCOUNT_JSON_CONTENT)
+    service_account_info = json.loads(account_json_content)
     if DEBUG_MODE:
-        print(f"Service Account JSON: {ACCOUNT_JSON_CONTENT}")
+        print(f"Service Account JSON: {account_json_content}")
         print(f"Service Account Info: {service_account_info}")
     gcp_cred = Credentials.from_service_account_info(service_account_info)
     fs_cred = credentials.Certificate(service_account_info)
@@ -100,7 +100,8 @@ def get_user_info(user_id):
     return user_info.to_dict()
 
 
-def create_basic_resume(user_id, resume_raw_content, resume_llm_processed_content ,resume_tags):
+def create_basic_resume(user_id, resume_raw_content,
+                        resume_llm_processed_content ,resume_tags):
     if not user_id or user_id == '':
         return None
     
@@ -222,14 +223,14 @@ class ResumeCompare(BaseModel):
     Suggestions: str = Field(description="对于简历拥有者而言应该如何准备该岗位的面试")
 
 parser = JsonOutputParser(pydantic_object=ResumeCompare)
-compare_template="""
+COMPARE_TEMPLATE="""
 我给你发送某人的简历内容与某岗位描述.
 {format_instructions}
 ###简历内容:{resume}
 ###职位描述:{jd}
 """
 prompt = PromptTemplate(
-    template=compare_template,
+    template=COMPARE_TEMPLATE,
     input_variables=["resume", "jd"],
     partial_variables={"format_instructions": parser.get_format_instructions()}
 )
@@ -243,19 +244,21 @@ def compare_resume_and_jd(resume_content, jd_content):
 
 # 文本输入处理逻辑
 # 调用 llm 对于法语句子产生特定的处理
-french_process_prompt = """
-请使用中文逐字逐词给我讲解下面的法语内容，如果有重要的语法点或惯用语也请说明，最后仿造两个类似的法语句子。{target}"""
+FRENCH_PROCESS_PROMPT = """
+请使用中文逐字逐词给我讲解下面的法语内容，如果有重要的语法点或惯用语也请说明，
+最后仿造两个类似的法语句子。{target}"""
 
-resume_summary_prompt = """
-以下内容是一个简历的文本内容，请忽略与个人优势、介绍、工作经历、项目经历以外无关的部分，比如电话号码和邮箱，然后梳理这个简历，不要遗漏任何技能点或者工作内容。{target}"""
+RESUME_SUMMARY_PROMPT = """
+以下内容是一个简历的文本内容，请忽略与个人优势、介绍、工作经历、项目经历以外无关的部分，
+比如电话号码和邮箱，然后梳理这个简历，不要遗漏任何技能点或者工作内容。{target}"""
 
 def openai_invoke(template: str, fill_content: str):
     llm = ChatOpenAI(temperature=0.2)
-    prompt = ChatPromptTemplate.from_messages([
+    french_prompt = ChatPromptTemplate.from_messages([
         ("system","You are french language teacher."),
         ("user", "{input}")
     ])
-    chain = prompt | llm
+    chain = french_prompt | llm
     response = chain.invoke({"input":template.format(target=fill_content)})
     return response.content
 
@@ -281,8 +284,8 @@ def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
     print(f"Downloading file from {url}")
     response = requests.head(url)
     total_length = int(response.headers.get('content-length', 0))
-    if max_size > 0 and total_length > max_size:
-        print(f"file size is too large, max size is 1MB, file size is {total_length}")
+    if total_length > max_size > 0:
+        print(f"file size is too large, max size is 5MB, file size is {total_length}")
         return None
 
     # 文件大小合适，开始下载
@@ -295,9 +298,8 @@ def download_files(url: str, suffix: str, max_size: int = 1024 * 256 * 4 * 5):
                 f.write(chunk)
         print(f"File downloaded and saved as {random_filename}")
         return random_filename
-    else:
-        print("Failed to download the file.")
-        return None
+    print("Failed to download the file.")
+    return None
 
 def process_pdf_file(url: str):
     file_path = download_files(url,'.pdf')
@@ -402,24 +404,22 @@ class MyBot(fp.PoeBot):
                         if not storage_blob_url:
                             yield fp.PartialResponse(text="获取 html 文件失败")
                             continue
-                        else:
-                            yield fp.PartialResponse(text=f"已上传文件到GCP存储 {storage_blob_url}")
-                            continue
+                        yield fp.PartialResponse(text=f"已上传文件到GCP存储 {storage_blob_url}")
+                        continue
                     case "text/plain":
                         file_content = process_plain_text_file(attachment.url)
                         if len(file_content) < 50:
                             yield fp.PartialResponse(text=f"文本内容过短{file_content}")
                             continue
                         if not user_basic_resume_exists:
-                            llm_processed_content = openai_invoke(resume_summary_prompt, file_content)
+                            llm_processed_content = openai_invoke(RESUME_SUMMARY_PROMPT, file_content)
                             create_basic_resume(user_id, file_content, llm_processed_content, ["resume"])
                             update_user_info(user_id, resume_register=True)
                             yield fp.PartialResponse(text=f"已创建简历，简历内容也通过LLM进行了梳理{llm_processed_content}")
                             continue
-                        else:
-                            # compare_succ 失败时，可以进行埋点
-                            _, compare_rst = compare_jd(user_id, file_content, "text/plain")
-                            yield fp.PartialResponse(text=compare_rst)
+                        # compare_succ 失败时，可以进行埋点
+                        _, compare_rst = compare_jd(user_id, file_content, "text/plain")
+                        yield fp.PartialResponse(text=compare_rst)
                     case "application/pdf":
                         # yield fp.PartialResponse(text=process_pdf_file(attachment.url))
                         
@@ -431,7 +431,7 @@ class MyBot(fp.PoeBot):
                             yield fp.PartialResponse(text="No enough resume content detected from the pdf file")
                             continue
                         if not user_basic_resume_exists:
-                            llm_processed_content = openai_invoke(resume_summary_prompt, pdf_full_content)
+                            llm_processed_content = openai_invoke(RESUME_SUMMARY_PROMPT, pdf_full_content)
                             create_basic_resume(user_id, pdf_full_content, llm_processed_content, ["resume"])
                             # todo 这里存在事务问题，如果创建简历成功，但是更新用户信息失败，会导致用户信息和简历不一致
                             update_user_info(user_id, resume_register=True)
@@ -447,11 +447,10 @@ class MyBot(fp.PoeBot):
                         if not user_basic_resume_exists:
                             yield fp.PartialResponse(text="你还没有创建简历，请先使用 文本[RESUME]上传简历或pdf方式上传个人简历")
                             continue
-                        else:
-                            # 以下部分内容出现多次，后续需封装成函数
-                            _, compare_rst = compare_jd(user_id, image_content, "image/jpeg")
-                            yield fp.PartialResponse(text=compare_rst)
-                            continue
+                        # 以下部分内容出现多次，后续需封装成函数
+                        _, compare_rst = compare_jd(user_id, image_content, "image/jpeg")
+                        yield fp.PartialResponse(text=compare_rst)
+                        continue
                     case _:
                         yield fp.PartialResponse(text=f"Attachment type: {attachment.content_type} is not supported right now")  
 
@@ -480,7 +479,7 @@ class MyBot(fp.PoeBot):
             match user_intent:
                 case 1:
                     # 通过文本创建简历
-                    llm_processed_content = openai_invoke(resume_summary_prompt, pdf_full_content)
+                    llm_processed_content = openai_invoke(RESUME_SUMMARY_PROMPT, pdf_full_content)
                     create_basic_resume(user_id, pdf_full_content, llm_processed_content, ["resume"])
                     # todo 这里存在事务问题，如果创建简历成功，但是更新用户信息失败，会导致用户信息和简历不一致
                     update_user_info(user_id, resume_register=True)

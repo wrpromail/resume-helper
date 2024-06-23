@@ -1,0 +1,7 @@
+torch 
+transformers
+ChatTTS
+gradio
+omegaconf
+vocos
+vector_quantize-pytorch

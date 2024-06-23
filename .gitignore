@@ -5,3 +5,5 @@ util_test.py
 firebase_test.py
 local_secret.sh
 svc/node_modules
+.venv
+.env

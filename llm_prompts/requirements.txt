@@ -1,0 +1,6 @@
+httpx 
+httpx-sse 
+PyJWT
+langchain_community
+#llama-index
+#llama-index-llms-mistralai
